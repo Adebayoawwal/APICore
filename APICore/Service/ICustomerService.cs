@@ -1,4 +1,5 @@
-﻿namespace APICore.Service
+﻿
+namespace APICore.Service
 {
     public interface ICustomerService
     {
