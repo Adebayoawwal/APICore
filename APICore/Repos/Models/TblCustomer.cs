@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
 
-namespace LearnAPI.Repos.Models;
+namespace APICore.Repos.Models;
 
 [Table("tbl_customer")]
 public partial class TblCustomer

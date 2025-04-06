@@ -1,37 +1,164 @@
 using APICore.Container;
+using APICore.Helper;
+using APICore.Modal;
 using APICore.Repos.Data;
+using APICore.Repos.Models;
 using APICore.Service;
+using AutoMapper;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Configuration;
+using Microsoft.IdentityModel.Tokens;
+using Serilog;
+using System.Text;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+        // Add services to the container.
+        builder.Logging.AddConsole(); // Example: add console logging
 
-builder.Services.AddControllers();
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-builder.Services.AddTransient<ICustomerService, CustomerService>();
-var configuration = builder.Configuration;
-builder.Services.AddDbContextPool<ApplicationDbcontext>(options => {
-    options.UseSqlServer(
-        configuration.GetConnectionString("DbContext")
-    );
-});
+        builder.Services.AddControllers();
+        // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+        builder.Services.AddEndpointsApiExplorer();
+        builder.Services.AddSwaggerGen();
+        builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("EmailSettings"));
+        builder.Services.AddTransient<ICustomerService, CustomerService>();
+        builder.Services.AddTransient<IRefreshHandler, RefreshHandler>();
+        builder.Services.AddTransient<IUserService, UserService>();
+        builder.Services.AddTransient<IUserRoleServices, UserRoleService>();
+        builder.Services.AddTransient<IEmailService, EmailService>();
+        builder.Services.AddDbContext<ApplicationDbcontext>(o =>
+        o.UseSqlServer(builder.Configuration.GetConnectionString("DbContext")));
 
-var app = builder.Build();
+        //builder.Services.AddAuthentication("BasicAuthentication").AddScheme<AuthenticationSchemeOptions, BasicAuthenticationHandler>("BasicAuthentication", null);
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+        var _authkey = builder.Configuration.GetValue<string>("JwtSettings:securitykey");
+        builder.Services.AddAuthentication(item =>
+        {
+            item.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+            item.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+        }).AddJwtBearer(item =>
+        {
+            item.RequireHttpsMetadata = true;
+            item.SaveToken = true;
+            item.TokenValidationParameters = new TokenValidationParameters()
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_authkey)),
+                ValidateIssuer = false,
+                ValidateAudience = false,
+                ClockSkew = TimeSpan.Zero
+            };
 
-app.UseHttpsRedirection();
+        });
 
-app.UseAuthorization();
+        var automapper = new MapperConfiguration(item => item.AddProfile(new AutoMapperHandler()));
+        IMapper mapper = automapper.CreateMapper();
+        builder.Services.AddSingleton(mapper);
+        builder.Services.AddCors(p => p.AddPolicy("corspolicy", build =>
+        {
+            build.WithOrigins("*").AllowAnyMethod().AllowAnyHeader();
+        }));
 
-app.MapControllers();
+        builder.Services.AddCors(p => p.AddPolicy("corspolicy1", build =>
+        {
+            build.WithOrigins("https://localhost:7249").AllowAnyMethod().AllowAnyHeader();
+        }));
 
-app.Run();
+        builder.Services.AddCors(p => p.AddDefaultPolicy(build =>
+        {
+            build.WithOrigins("*").AllowAnyMethod().AllowAnyHeader();
+        }));
+
+        builder.Services.AddRateLimiter(_ => _.AddFixedWindowLimiter(policyName: "fixedwindow", options =>
+        {
+            options.Window = TimeSpan.FromSeconds(10);
+            options.PermitLimit = 1;
+            options.QueueLimit = 0;
+            options.QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst;
+        }).RejectionStatusCode = 401);
+        string logpath = builder.Configuration.GetSection("Logging:Logpath").Value;
+        var _Loger = new LoggerConfiguration()
+            .MinimumLevel.Information()
+            .MinimumLevel.Override("microsoft", Serilog.Events.LogEventLevel.Warning)
+            .Enrich.FromLogContext()
+            .WriteTo.File(logpath)
+            .CreateLogger ;
+            builder.Logging.Add(_Loger);
+
+
+        var app = builder.Build();
+
+        app.MapGet("/minimalapi", () => "Awwal Techiees");
+
+        object value = app.MapGet("/getchannel", (string channelname) => "Welcome to " + channelname).WithOpenApi(opt =>
+        {
+
+
+            var parameter = opt.Parameters[0];
+            parameter.Description = "Enter Channel Name";
+            return opt;
+        });
+
+        app.MapGet("/getcustomer", async (ApplicationDbcontext db) =>
+        {
+            return await db.TblCustomers.ToListAsync();
+        });
+
+        app.MapGet("/getcustomerbycode/{code}", async (ApplicationDbcontext db, string code) =>
+        {
+            return await db.TblCustomers.FindAsync(code);
+        });
+
+        app.MapPost("/createcustomer", async (ApplicationDbcontext db, TblCustomer customer) =>
+        {
+            await db.TblCustomers.AddAsync(customer);
+            await db.SaveChangesAsync();
+        });
+
+        app.MapPut("/updatecustomer/{code}", async (ApplicationDbcontext db, TblCustomer customer, string code) =>
+        {
+            var existdata = await db.TblCustomers.FindAsync(code);
+            if (existdata != null)
+            {
+                existdata.Name = customer.Name;
+                existdata.Email = customer.Email;
+            }
+            await db.SaveChangesAsync();
+        });
+
+        app.MapDelete("/removecustomer/{code}", async (ApplicationDbcontext db, string code) =>
+        {
+            var existdata = await db.TblCustomers.FindAsync(code);
+            if (existdata != null)
+            {
+                db.TblCustomers.Remove(existdata);
+            }
+            await db.SaveChangesAsync();
+        });
+
+        app.UseRateLimiter();
+        // Configure the HTTP request pipeline.
+        //if (app.Environment.IsDevelopment())
+        //{
+        app.UseSwagger();
+        app.UseSwaggerUI();
+        //}
+
+        app.UseStaticFiles();
+
+        app.UseCors();
+
+        app.UseHttpsRedirection();
+
+        app.UseAuthentication();
+
+        app.UseAuthorization();
+
+        app.MapControllers();
+
+        app.Run();
+  
