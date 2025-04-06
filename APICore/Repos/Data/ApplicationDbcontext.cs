@@ -1,11 +1,11 @@
-﻿using APICore.Container;
-using LearnAPI.Repos.Models;
+﻿using APICore.Repos.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace APICore.Repos.Data
 {
     public class ApplicationDbcontext : DbContext
     {
+    
         public ApplicationDbcontext()
         {
         }
@@ -28,7 +28,5 @@ namespace APICore.Repos.Data
         public DbSet<TblSubtable> tblSubtables { get; set; }
         public DbSet<TblTempuser> tblTempusers  { get; set; }
         public DbSet<TblUser> tblUsers { get; set; }
-
-
     }
 }
